@@ -45,7 +45,8 @@ func TestSessionsCmdJSONFormat(t *testing.T) {
 	}
 
 	var got struct {
-		Sessions []struct {
+		TotalSessions int `json:"total_sessions"`
+		Sessions      []struct {
 			SessionID    string `json:"session_id"`
 			StepCount    int    `json:"step_count"`
 			LastActivity string `json:"last_activity"`
@@ -56,6 +57,9 @@ func TestSessionsCmdJSONFormat(t *testing.T) {
 		t.Fatalf("output is not valid JSON: %v\noutput: %s", err, out.String())
 	}
 
+	if got.TotalSessions != 1 {
+		t.Fatalf("total_sessions = %d, want 1; output: %s", got.TotalSessions, out.String())
+	}
 	if len(got.Sessions) != 1 {
 		t.Fatalf("sessions length = %d, want 1; output: %s", len(got.Sessions), out.String())
 	}

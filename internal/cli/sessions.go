@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -18,11 +17,11 @@ import (
 const (
 	sessionsFormatText = "text"
 	sessionsFormatJSON = "json"
-	maxSessionSteps    = math.MaxInt
 )
 
 type sessionsJSONOutput struct {
-	Sessions []sessionJSON `json:"sessions"`
+	TotalSessions int           `json:"total_sessions"`
+	Sessions      []sessionJSON `json:"sessions"`
 }
 
 type sessionJSON struct {
@@ -128,7 +127,8 @@ func writeSessionsText(w io.Writer, sessions []index.SessionInfo) error {
 
 func writeSessionsJSON(w io.Writer, s *store.Store, idx *index.DB, sessions []index.SessionInfo) error {
 	output := sessionsJSONOutput{
-		Sessions: make([]sessionJSON, 0, len(sessions)),
+		TotalSessions: len(sessions),
+		Sessions:      make([]sessionJSON, 0, len(sessions)),
 	}
 
 	for _, sess := range sessions {
@@ -151,9 +151,9 @@ func writeSessionsJSON(w io.Writer, s *store.Store, idx *index.DB, sessions []in
 }
 
 func loadSessionJSONStats(s *store.Store, idx *index.DB, sess index.SessionInfo) (sessionJSONStats, error) {
-	steps, err := idx.ListSteps(sess.ID, maxSessionSteps)
+	count, err := idx.CountSteps(sess.ID)
 	if err != nil {
-		return sessionJSONStats{}, fmt.Errorf("list steps for session %s: %w", sess.ID, err)
+		return sessionJSONStats{}, fmt.Errorf("count steps for session %s: %w", sess.ID, err)
 	}
 
 	agentID := sess.Origin
@@ -168,7 +168,7 @@ func loadSessionJSONStats(s *store.Store, idx *index.DB, sess index.SessionInfo)
 	}
 
 	return sessionJSONStats{
-		StepCount: len(steps),
+		StepCount: count,
 		AgentID:   agentID,
 	}, nil
 }
