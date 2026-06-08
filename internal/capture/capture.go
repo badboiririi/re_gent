@@ -388,7 +388,7 @@ func (r *Recorder) adoptLegacyCanonicalRef(session SessionMetadata) error {
 	if canonErr == nil {
 		if canonicalHead == legacyHead {
 			_ = r.Store.DeleteRef("sessions/"+oldCanonicalID, legacyHead)
-			return nil
+			return r.adoptLegacyCanonicalIndex(oldCanonicalID, session)
 		}
 		isAncestor, ancErr := r.stepIsAncestor(legacyHead, canonicalHead)
 		if ancErr != nil {
@@ -396,7 +396,7 @@ func (r *Recorder) adoptLegacyCanonicalRef(session SessionMetadata) error {
 		}
 		if isAncestor {
 			_ = r.Store.DeleteRef("sessions/"+oldCanonicalID, legacyHead)
-			return nil
+			return r.adoptLegacyCanonicalIndex(oldCanonicalID, session)
 		}
 		logHookError(r.Store, fmt.Sprintf("archiving divergent legacy canonical ref %s -> %s", oldCanonicalID, session.SessionID))
 		return r.archiveLegacySessionRef(oldCanonicalID, legacyHead)
@@ -411,6 +411,23 @@ func (r *Recorder) adoptLegacyCanonicalRef(session SessionMetadata) error {
 	}
 	_ = r.Store.DeleteRef("sessions/"+oldCanonicalID, legacyHead)
 	logDebug(r.Store, fmt.Sprintf("adopted legacy canonical ref %s -> %s", oldCanonicalID, session.SessionID))
+	return r.adoptLegacyCanonicalIndex(oldCanonicalID, session)
+}
+
+// adoptLegacyCanonicalIndex migrates SQLite index rows (steps, messages, tool
+// uses, transcript pointers, snapshots) from the old colon-separated canonical
+// session id to the new "--" id. Without this the ref is repointed but log/show/
+// sessions queries, which key on the new id, would no longer find the recorded
+// history. Mirrors adoptLegacySessionIndex; only called when the colon ref was
+// actually migrated, so it stays off the per-turn hot path.
+func (r *Recorder) adoptLegacyCanonicalIndex(oldCanonicalID string, session SessionMetadata) error {
+	changed, err := r.Index.RenameSession(oldCanonicalID, session.SessionID, session.Origin)
+	if err != nil {
+		return fmt.Errorf("adopt legacy canonical index: %w", err)
+	}
+	if changed {
+		logDebug(r.Store, fmt.Sprintf("adopted legacy canonical index %s -> %s", oldCanonicalID, session.SessionID))
+	}
 	return nil
 }
 
