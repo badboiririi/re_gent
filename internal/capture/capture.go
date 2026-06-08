@@ -668,10 +668,12 @@ func computeAndWriteBlame(s *store.Store, parentHash, currentStepHash, treeHash 
 			oldBlame, err := s.ReadBlameForFile(parentHash, entry.Path)
 			if err == nil {
 				if err := s.WriteBlameForFile(currentStepHash, entry.Path, oldBlame); err != nil {
+					logBlameError(s, currentStepHash, entry.Path, err.Error())
 					problems = append(problems, fmt.Errorf("copy blame for %s: %w", entry.Path, err))
 				}
 				continue
 			}
+			logBlameError(s, currentStepHash, entry.Path, err.Error())
 			problems = append(problems, fmt.Errorf("read parent blame for unchanged %s: %w", entry.Path, err))
 			continue
 		}
@@ -681,23 +683,27 @@ func computeAndWriteBlame(s *store.Store, parentHash, currentStepHash, treeHash 
 		if hasParentEntry {
 			oldContent, err = s.ReadBlob(parentEntry.Blob)
 			if err != nil {
+				logBlameError(s, currentStepHash, entry.Path, err.Error())
 				problems = append(problems, fmt.Errorf("read parent blob for %s: %w", entry.Path, err))
 				continue
 			}
 			oldBlame, err = s.ReadBlameForFile(parentHash, parentEntry.Path)
 			if err != nil {
+				logBlameError(s, currentStepHash, entry.Path, err.Error())
 				problems = append(problems, fmt.Errorf("read parent blame for %s: %w", entry.Path, err))
 			}
 		}
 
 		newContent, err := s.ReadBlob(entry.Blob)
 		if err != nil {
+			logBlameError(s, currentStepHash, entry.Path, err.Error())
 			problems = append(problems, fmt.Errorf("read current blob for %s: %w", entry.Path, err))
 			continue
 		}
 
 		newBlame := store.ComputeBlame(oldContent, newContent, oldBlame, currentStepHash)
 		if err := s.WriteBlameForFile(currentStepHash, entry.Path, newBlame); err != nil {
+			logBlameError(s, currentStepHash, entry.Path, err.Error())
 			problems = append(problems, fmt.Errorf("write blame for %s: %w", entry.Path, err))
 		}
 	}
@@ -836,4 +842,9 @@ func logDebug(s *store.Store, msg string) {
 func LogHookError(root string, msg string) {
 	logToFile(root, "log/hook-error.log",
 		fmt.Sprintf("[%s] %s", time.Now().Format(time.RFC3339), msg))
+}
+
+func logBlameError(s *store.Store, stepHash store.Hash, filePath, errMsg string) {
+	logToFile(s.Root, "log/blame-errors.log",
+		fmt.Sprintf("[%s] step=%s file=%s: %s", time.Now().Format(time.RFC3339), stepHash, filePath, errMsg))
 }
