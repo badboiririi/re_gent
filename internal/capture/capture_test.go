@@ -703,6 +703,92 @@ func TestRecorder_AdoptsLegacyRawSessionID(t *testing.T) {
 	}
 }
 
+// TestRecorder_AdoptsLegacyColonCanonicalSessionID guards against the migration
+// moving the object-store ref to the new "--" id while leaving the SQLite index
+// rows under the old ":" id, which would make log/show/sessions lose the history.
+func TestRecorder_AdoptsLegacyColonCanonicalSessionID(t *testing.T) {
+	root := t.TempDir()
+	if _, err := store.Init(root); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+
+	recorder, ok, err := Open(root)
+	if err != nil {
+		t.Fatalf("open recorder: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected initialized recorder")
+	}
+	defer func() { _ = recorder.Close() }()
+
+	externalID := "c8f65e87"
+	// Old canonical id used the ":" separator (invalid on Windows filesystems).
+	oldCanonicalID := OriginClaudeCode + ":" + externalID
+	newCanonicalID := canonicalSessionID(OriginClaudeCode, externalID)
+	if oldCanonicalID == newCanonicalID {
+		t.Fatal("test setup: old and new canonical ids must differ")
+	}
+
+	legacyBlob, err := recorder.Store.WriteBlob([]byte("legacy\n"))
+	if err != nil {
+		t.Fatalf("write legacy blob: %v", err)
+	}
+	legacyTree := &store.Tree{Entries: []store.TreeEntry{{Path: "legacy.txt", Blob: legacyBlob}}}
+	legacyTreeHash, err := recorder.Store.WriteTree(legacyTree)
+	if err != nil {
+		t.Fatalf("write legacy tree: %v", err)
+	}
+	legacyStep := &store.Step{
+		Tree:           legacyTreeHash,
+		Cause:          store.Cause{ToolName: "Write", ToolUseID: "legacy-tool"},
+		SessionID:      oldCanonicalID,
+		Origin:         OriginClaudeCode,
+		TimestampNanos: 1,
+	}
+	legacyStepHash, err := recorder.Store.WriteStep(legacyStep)
+	if err != nil {
+		t.Fatalf("write legacy step: %v", err)
+	}
+	if err := recorder.Index.IndexStep(legacyStepHash, legacyStep, legacyTree); err != nil {
+		t.Fatalf("index legacy step: %v", err)
+	}
+	if err := recorder.Store.UpdateRef("sessions/"+oldCanonicalID, "", legacyStepHash); err != nil {
+		t.Fatalf("write legacy colon ref: %v", err)
+	}
+
+	meta := SessionMetadata{SessionID: externalID, Origin: OriginClaudeCode}
+	if err := recorder.RecordUserPrompt(UserPrompt{SessionMetadata: meta, Prompt: "continue"}); err != nil {
+		t.Fatalf("record prompt: %v", err)
+	}
+
+	// The ref must move to the "--" id and the colon ref must be gone.
+	if _, err := recorder.Store.ReadRef("sessions/" + newCanonicalID); err != nil {
+		t.Fatalf("new canonical ref was not adopted: %v", err)
+	}
+	if _, err := recorder.Store.ReadRef("sessions/" + oldCanonicalID); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("legacy colon ref should be removed after adoption, err=%v", err)
+	}
+
+	// The index rows must move with it, otherwise the history is orphaned.
+	steps, err := recorder.Index.ListSteps(newCanonicalID, 10)
+	if err != nil {
+		t.Fatalf("list canonical steps: %v", err)
+	}
+	if len(steps) != 1 {
+		t.Fatalf("expected legacy step under new canonical id, got %d", len(steps))
+	}
+	if steps[0].Hash != legacyStepHash {
+		t.Fatalf("migrated step = %s, want legacy step %s", steps[0].Hash, legacyStepHash)
+	}
+	leftover, err := recorder.Index.ListSteps(oldCanonicalID, 10)
+	if err != nil {
+		t.Fatalf("list old steps: %v", err)
+	}
+	if len(leftover) != 0 {
+		t.Fatalf("legacy colon index rows should be migrated away, got %d", len(leftover))
+	}
+}
+
 func TestRecorder_DivergentLegacyRawSessionIDIsNotMerged(t *testing.T) {
 	root := t.TempDir()
 	if _, err := store.Init(root); err != nil {
