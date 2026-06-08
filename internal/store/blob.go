@@ -85,10 +85,13 @@ func atomicWriteFile(path string, content []byte, writeMode fs.FileMode) error {
 	}
 	tmpFile = nil // Mark as closed to prevent cleanup
 
-	// On Windows, renaming over a read-only file returns "Access is denied".
-	// Make the target writable if it exists so the rename can succeed.
-	os.Chmod(path, 0o644) // Ignore error: file may not exist
-	os.Remove(path)
+	// On Windows, os.Rename (MoveFileEx with MOVEFILE_REPLACE_EXISTING) refuses to
+	// replace a read-only target with "Access is denied". Clearing the read-only bit
+	// first lets the rename replace it atomically. We deliberately do NOT os.Remove
+	// the target: removing it opens a window where readers (which take no lock) see
+	// the ref/blob as missing, breaking the atomic-replacement guarantee on every
+	// platform. chmod is ignored on error since the target may not exist yet.
+	_ = os.Chmod(path, 0o644)
 
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("rename temp file: %w", err)
